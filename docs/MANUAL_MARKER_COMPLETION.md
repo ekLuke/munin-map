@@ -43,3 +43,38 @@ After deployment restart the server (or use the documented authenticated
   traders or portals; use the controls only where meaningful.
 - Completion remains a manual status and does not mean the dungeon was
   actually looted.
+
+## Exhausted mineral deposits (manual)
+
+Right-click (long-press on mobile) **near** a visible ore deposit, then click
+**"Nascondi giacimento scavato / Ripristina"**.
+
+- The web UI finds the closest ore vegetation point within **8 meters** and
+  asks for confirmation. Categories include copper, tin, silver, obsidian,
+  muddy scrap and other ore.
+- A dedicated `ORE` pin is saved using Munin Map's **existing** pin API.
+  The pin itself is hidden from the normal marker layer; its coordinate
+  hides the actual vegetation item on the 2D map (WebGL or zoomed-in canvas).
+- Right-click near the same coordinate again to restore it. Restoring a pin
+  created by another browser requires the usual Munin Map admin token.
+- The normal world sweep already runs every **120 seconds** and should remove
+  fully destroyed world objects from future map data where the game no longer
+  reports them. Manual exclusions are an override for stale or partial cases.
+- To see the UI on Pelican, deploy these changed assets together:
+  `web/js/layers/markers.js`, `web/js/layers/markercanvas.js`,
+  `web/js/layers/shapes.js`, `web/js/layers/veg.js`,
+  **and new** `web/js/orehide.js`, alongside the unmodified original web
+  assets and `MuninMap.dll`.
+
+### Limitations
+
+- The manually hidden ore is filtered out of the 2D WebGL vegetation
+  renderer and high-zoom canvas shapes. **Low-zoom pregenerated raster
+  vegetation tiles** in browsers without WebGL2 may continue showing it
+  until the server re-renders the map tile; this web-only patch does not
+  erase baked pixels.
+- The 3D model view is unchanged.
+- Server scans do not prove a partially mined node is depleted. The
+  manual action is intentionally a visual-only override.
+- Ore changes are untested on the real TheLair deployment. Back up
+  the original `web/` directory and test with one copper node first.
