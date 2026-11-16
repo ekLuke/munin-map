@@ -40,6 +40,9 @@ export function clientId() {
 }
 
 export const PIN_TYPES = ['dot', 'fire', 'mine', 'house', 'cave'];
+// Manual completion is represented by a regular server-saved web pin.
+const COMPLETION_PIN_LABEL = 'DONE';
+const COMPLETION_PIN_OWNER = 'MuninDone';
 
 // which of the game's map icons (by location name or pin type, see World/MapIcons) stands for ours
 const GAME_ICON = {
@@ -62,9 +65,12 @@ export class MarkerLayers {
     this.catVisible = new Map(LOCATION_CATS.map((c) => [c, c !== 'poi']));
     this.sets = [];
     this.pins = new Map();        // pin id -> pin
+    try { this.hideCompleted = localStorage.getItem('munin-hide-completed') === '1'; }
+    catch { this.hideCompleted = false; }
     this.listeners = new Set();
     // everything is painted on one canvas (markercanvas.js), not a DOM element per marker
     this.canvas = new MarkerCanvas(() => this.drawList(), { gl: !!opts.gl }).addTo(map);
+    this.installCompletionFilter();
     layerState.onChange((k) => { if (k === 'labels' || k === 'iconScale' || k === 'iconDots') this.canvas.draw(); });
     store.onChange((sets) => this.render(sets));
     on('pin', (f) => this.addPin(f));
@@ -107,6 +113,7 @@ export class MarkerLayers {
     const items = [], lines = [];
     if (this.visible.get('pins') !== false)
       for (const p of this.pins.values()) {
+        if (this.isCompletionPin(p)) continue; // internal status markers only
         const icon = PIN_TYPES.includes(p.type) ? p.type : 'pin';
         items.push({ x: p.x, z: p.z, icon, color: colors[icon], img: this.gameIcon(icon), label: p.text, pin: true, open: (ll) => this.openPin(p, ll) });
       }
@@ -116,16 +123,18 @@ export class MarkerLayers {
       for (const m of set.markers || []) {
         const cat = m.cat || 'custom';
         if (set.id === 'locations' && this.catVisible.get(cat) === false) continue;
+        const completion = this.completionPin(m);
+        if (completion && this.hideCompleted) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
-        const label = m.label;
+        const label = completion ? `✕ ${m.label || cat}` : m.label;
         // a table pin as the game draws a shared one (markercanvas.js gamePinImage): its grey name too
         const crossSprite = this.gameIcons['pin:Checked'] ? `icons/game/${this.gameIcons['pin:Checked']}.png` : true;
-        const gamePin = cat === 'tablepin' ? { checked: m.checked ? crossSprite : false } : undefined;
-        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: cat === 'ward' && !m.on ? colors.wardoff : colors[m.icon] || colors[cat] || '#9aa5b5', img: this.gameIcon(m.icon || cat), label, gamePin,
+        const gamePin = completion ? { checked: crossSprite } : cat === 'tablepin' ? { checked: m.checked ? crossSprite : false } : undefined;
+        items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: completion ? '#42c58b' : (cat === 'ward' && !m.on ? colors.wardoff : colors[m.icon] || colors[cat] || '#9aa5b5'), img: this.gameIcon(m.icon || cat), label, gamePin,
           area: cat === 'ward' && m.r ? { r: m.r, on: !!m.on } : undefined,   // the ground a ward protects (MarkerGL draws the ring)
           labelColor: gamePin ? '#d6d6d6' : undefined,
           always: cat === 'spawn' || cat === 'boss' || cat === 'trader' || cat === 'miniboss',   // their labels always show (valheim.tools does the same): never in a tug of war
-          open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(editable ? this.basePopup(m, set) : cat === 'portal' ? this.portalPopup(m, set, byTag) : popupHtml(m, set)).openOn(this.map) });
+          open: (ll) => L.popup({ offset: [0, -8] }).setLatLng(ll).setContent(this.completionPopup(m, set, byTag, editable)).openOn(this.map) });
         if (cat === 'portal' && m.tag) { if (!byTag.has(m.tag)) byTag.set(m.tag, []); byTag.get(m.tag).push(m); }
       }
     }
@@ -192,6 +201,101 @@ export class MarkerLayers {
       } catch (e) { err.textContent = 'Could not remove: ' + e.message; err.hidden = false; }
     });
     L.popup({ offset: [0, -16] }).setLatLng(ll).setContent(el).openOn(this.map);
+  }
+
+
+  isCompletionPin(p) {
+    return p?.text === COMPLETION_PIN_LABEL && p?.name === COMPLETION_PIN_OWNER;
+  }
+
+  completionPin(m) {
+    // Coordinates identify the location; all browsers see these pins from the server.
+    return [...this.pins.values()].find((p) => this.isCompletionPin(p) &&
+      Math.abs(Number(p.x) - Number(m.x)) < 0.15 &&
+      Math.abs(Number(p.z) - Number(m.z)) < 0.15);
+  }
+
+  installCompletionFilter() {
+    const control = L.control({ position: 'topright' });
+    control.onAdd = () => {
+      const box = L.DomUtil.create('div', 'leaflet-bar munin-completion-filter');
+      box.style.cssText = 'padding:8px 10px;background:#17202b;color:#fff;border-radius:5px;font:13px sans-serif;box-shadow:0 1px 5px #0005;';
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = this.hideCompleted;
+      const span = document.createElement('span');
+      span.textContent = 'Nascondi completati';
+      label.append(checkbox, span);
+      box.append(label);
+      L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.disableScrollPropagation(box);
+      checkbox.addEventListener('change', () => {
+        this.hideCompleted = checkbox.checked;
+        try { localStorage.setItem('munin-hide-completed', this.hideCompleted ? '1' : '0'); }
+        catch {}
+        this.list = null;
+        this.canvas.draw();
+      });
+      return box;
+    };
+    control.addTo(this.map);
+  }
+
+  completionPopup(m, set, byTag, editable) {
+    const original = editable ? this.basePopup(m, set) :
+      m.cat === 'portal' ? this.portalPopup(m, set, byTag) : popupHtml(m, set);
+    const el = typeof original === 'string' ? document.createElement('div') : original;
+    if (typeof original === 'string') el.innerHTML = original;
+    const pin = this.completionPin(m);
+    const actions = document.createElement('div');
+    actions.className = 'pin-actions';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn small';
+    button.textContent = pin ? '↩ Segna da completare' : '✓ Segna completato';
+    const err = document.createElement('small');
+    err.className = 'err';
+    err.hidden = true;
+    let token = '';
+    try { token = localStorage.getItem('munin-admin-key') || ''; } catch {}
+    if (pin && !pin.mine && !token) {
+      button.disabled = true;
+      button.title = 'Solo il browser che ha creato il segnalino o un amministratore puo rimuoverlo';
+    }
+    actions.append(button, err);
+    el.append(actions);
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const headers = { 'Content-Type': 'application/json', 'X-Munin-Client': clientId() };
+      if (token) headers['X-Munin-Token'] = token;
+      const x = Math.round(Number(m.x) * 10) / 10;
+      const z = Math.round(Number(m.z) * 10) / 10;
+      try {
+        const response = pin ?
+          await fetch('api/unpin?id=' + encodeURIComponent(pin.id),
+            { method: 'POST', headers, body: '{}' }) :
+          await fetch('api/pin', { method: 'POST', headers,
+            body: JSON.stringify({ x, z, type: 'dot', text: COMPLETION_PIN_LABEL,
+              name: COMPLETION_PIN_OWNER, client: clientId() }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status);
+        if (pin) this.removePin(pin.id);
+        else if (data.id) this.addPin({ id: data.id, x, z, text: COMPLETION_PIN_LABEL,
+          name: COMPLETION_PIN_OWNER, type: 'dot', mine: true });
+        else await this.loadPins();
+        this.list = null;
+        this.canvas.draw();
+        if (this.hideCompleted) this.map.closePopup();
+        else this.map._popup?.setContent(this.completionPopup(m, set, byTag, editable));
+      } catch (e) {
+        err.textContent = 'Errore: ' + e.message;
+        err.hidden = false;
+        button.disabled = false;
+      }
+    });
+    return el;
   }
 
   // a portal's popup, with a button to each other end of its tag (byTag: tag -> portals, filled
