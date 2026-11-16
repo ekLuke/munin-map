@@ -9,6 +9,7 @@
 import { TILE, WORLD_HALF, chunkOf, chunksOneZoomOut, metersPerPixel, CHUNKS } from '../crs.js';
 import { chunks } from '../data.js';
 import { zoomOutPixelBounds } from './tiles.js';
+import { oreExclusions, ORE_KINDS } from '../orehide.js';
 
 export const VEG_SHAPES_ZOOM = 7.5;   // from here up this layer draws the trees (Leaflet rounds 7.5 to tile zoom 8)
 
@@ -35,6 +36,7 @@ export class VegLayer extends L.GridLayer {
     // vegetation data is cached for the page's life, so a sweep changes nothing here: no redraw on
     // chunk changes (it used to blink every tree each sweep)
     super(Object.assign({ tileSize: TILE, minZoom: VEG_SHAPES_ZOOM, maxZoom: 10, updateWhenIdle: false, updateWhenZooming: true, keepBuffer: 2, className: 'veg-tile', zIndex: 101 }, options));
+    oreExclusions.onChange(() => { if (this._map) this.redraw(); });
   }
 
   _getTiledPixelBounds(center) { return zoomOutPixelBounds(this, center); }   // see tiles.js
@@ -74,7 +76,7 @@ export class VegLayer extends L.GridLayer {
         if (cx >= 0 && cz >= 0 && cx < CHUNKS && cz < CHUNKS) lists.push(chunks.veg(cx, cz));
     const pts = [];
     for (const list of await Promise.all(lists))
-      for (const p of list) if (p.x >= minX - MARGIN && p.x <= maxX + MARGIN && p.z >= minZ - MARGIN && p.z <= maxZ + MARGIN && VEG[p.kind]) pts.push(p);
+      for (const p of list) if (p.x >= minX - MARGIN && p.x <= maxX + MARGIN && p.z >= minZ - MARGIN && p.z <= maxZ + MARGIN && VEG[p.kind] && !(ORE_KINDS.has(p.kind) && oreExclusions.matches(p.x, p.z))) pts.push(p);
     if (pts.length === 0) return;
     pts.sort((a, b) => b.z - a.z);   // north to south: nearer (southern) crowns overlap farther ones
     const ctx = canvas.getContext('2d');
