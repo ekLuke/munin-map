@@ -78,3 +78,22 @@ Right-click (long-press on mobile) **near** a visible ore deposit, then click
   manual action is intentionally a visual-only override.
 - Ore changes are untested on the real TheLair deployment. Back up
   the original `web/` directory and test with one copper node first.
+
+## Sunken crypt muddy scrap piles
+
+Munin Map classifies `mudpile` objects as vegetation kind **38 (MuddyScrap)**,
+including the piles physically inside sunken crypts. The dots can therefore
+appear on the surface map at the crypt's X/Z coordinates. Their count may
+match `Still inside: Muddy Scrap Pile` in the dungeon popup.
+
+**When a Sunken crypt is manually marked complete**, the custom web map
+hides the muddy-scrap points attributed to that crypt. It determines the
+nearest known dungeon entrance within 160 metres, matching the search
+logic used by `src/World/Dungeons.cs`. Unmarking completion restores them.
+
+- This works on the **2D WebGL** and zoomed-in **canvas vegetation** renderers.
+- It does **not** delete iron, loot or rocks from the game.
+- Detection depends on discovered dungeon markers; an undiscovered
+  entrance may not be in the browser's marker data.
+- Raster vegetation tiles and the 3D view remain subject to the limitations
+  documented above.
