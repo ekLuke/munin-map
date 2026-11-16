@@ -42,6 +42,11 @@ function countBadge(s) {
 const asDot = (it) => layerState.iconDots && !it.pin && !it.always;
 
 function iconImage(name, color, onReady, img, gamePin) {
+  if (gamePin?.checked) {
+    // Render the cross above SVG icons as well as game sprite images.
+    const src = img || 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(iconSvg(name, color).replace('<svg ', `<svg width="${ICON_RES}" height="${ICON_RES}" `));
+    return gamePinImage(src, gamePin, onReady);
+  }
   if (gamePin && img) return gamePinImage(img, gamePin, onReady);
   const key = img ? `${img}|${color}` : `${name}|${color}`;
   const c = iconCache.get(key);
