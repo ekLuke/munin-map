@@ -1,6 +1,6 @@
-// Manual ore exclusions shared by the web map's markers and vegetation renderers.
-// Storage lives in Munin Map's existing web-pin API, not in the Valheim save.
-// This module intentionally has no network access or UI of its own.
+// Hides ore objects in the web map, not in the Valheim world.
+// Manual individual exclusions and completed crypts are persisted through
+// Munin Map's existing server-side web pins.
 export const ORE_PIN_NAME = 'MuninOreHide';
 export const ORE_PIN_TEXT = 'ORE';
 export const ORE_KINDS = new Set([8, 34, 35, 36, 37, 38]);
@@ -8,24 +8,68 @@ export const ORE_NAMES = new Map([
   [8, 'Altro minerale'], [34, 'Rame'], [35, 'Stagno'], [36, 'Argento'],
   [37, 'Ossidiana'], [38, 'Rottami fangosi'],
 ]);
+
+const COMPLETION_PIN_NAME = 'MuninDone';
+const COMPLETION_PIN_TEXT = 'DONE';
+const DUNGEON_REACH = 160; // Same search radius as World/Dungeons.cs
 const listeners = new Set();
-let points = [];
+let excludedPoints = [];
+let completedPoints = [];
+let dungeonEntrances = [];
+let revision = '';
+
+function identity(list) {
+  return list.map(p => p.map(n => Number(n).toFixed(1)).join(',')).sort().join('|');
+}
+
+function refresh() {
+  // Keep the signature stable if live events arrive in a different order.
+  const next = identity(excludedPoints) + '#' + identity(completedPoints) +
+    '#' + dungeonEntrances.map(d => `${d.x.toFixed(1)},${d.z.toFixed(1)},${d.crypt ? 1 : 0}`).sort().join('|');
+  if (next === revision) return;
+  revision = next;
+  for (const fn of listeners) fn();
+}
+
 export const oreExclusions = {
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   isPin(p) { return p && p.name === ORE_PIN_NAME && p.text === ORE_PIN_TEXT; },
   setPins(pins) {
-    const next = [...pins].filter(this.isPin).map(p => [Number(p.x), Number(p.z)])
+    const all = [...pins];
+    excludedPoints = all.filter(p => this.isPin(p)).map(p => [Number(p.x), Number(p.z)])
       .filter(([x,z]) => Number.isFinite(x) && Number.isFinite(z));
-    const key = next.map(([x,z]) => x.toFixed(1)+','+z.toFixed(1)).sort().join('|');
-    if (key === this.key) return;
-    this.key = key; points = next;
-    for (const fn of listeners) fn();
+    completedPoints = all.filter(p => p.name === COMPLETION_PIN_NAME && p.text === COMPLETION_PIN_TEXT)
+      .map(p => [Number(p.x), Number(p.z)])
+      .filter(([x,z]) => Number.isFinite(x) && Number.isFinite(z));
+    refresh();
   },
-  matches(x,z) {
-    // World vegetation positions are quantized to 1/4m; web pins to 1/10m.
-    return points.some(([px,pz]) => (x-px)**2 + (z-pz)**2 < 0.36);
+  setDungeons(sets) {
+    dungeonEntrances = sets.flatMap(set => set.markers || []).filter(m =>
+      m.cat === 'dungeon' && Number.isFinite(Number(m.x)) && Number.isFinite(Number(m.z)))
+      .map(m => ({
+        x: Number(m.x), z: Number(m.z),
+        crypt: /sunken.?crypt/i.test(String(m.label || '') + ' ' + String(m.prefab || '')),
+      }));
+    refresh();
+  },
+  isCompletedCrypt(x,z) {
+    // The server assigns a dungeon object to the closest dungeon entrance.
+    // Never hide a pile assigned to another dungeon within the same radius.
+    let nearest = null, best = DUNGEON_REACH ** 2;
+    for (const d of dungeonEntrances) {
+      const dist = (x-d.x)**2 + (z-d.z)**2;
+      if (dist < best) { best = dist; nearest = d; }
+    }
+    return !!nearest?.crypt && completedPoints.some(([px,pz]) =>
+      Math.abs(nearest.x-px) < 0.15 && Math.abs(nearest.z-pz) < 0.15);
+  },
+  matches(x,z,kind) {
+    // Quarter-metre vegetation coordinates vs 0.1m manual-pin coordinates.
+    if (excludedPoints.some(([px,pz]) => (x-px)**2 + (z-pz)**2 < 0.36)) return true;
+    // Only muddy scrap piles (38) belonging to a manually completed crypt.
+    return kind === 38 && this.isCompletedCrypt(x,z);
   },
   pinAt(x,z) {
-    return points.some(([px,pz]) => (x-px)**2 + (z-pz)**2 < 0.36);
+    return excludedPoints.some(([px,pz]) => (x-px)**2 + (z-pz)**2 < 0.36);
   },
 };
