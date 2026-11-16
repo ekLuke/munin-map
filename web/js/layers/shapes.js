@@ -1672,7 +1672,7 @@ export class TreesGL extends ChunkShapes {
       const o = i * TREE_STRIDE;
       const kind = src[o + 19] >> 2;
       const x = dv.getFloat32(o, true), z = dv.getFloat32(o + 4, true);
-      if (ORE_KINDS.has(kind) && oreExclusions.matches(x, z)) {
+      if (ORE_KINDS.has(kind) && oreExclusions.matches(x, z, kind)) {
         removed++;
         if (i < packed.small) smallRemoved++;
         continue;
