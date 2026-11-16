@@ -76,7 +76,7 @@ export class VegLayer extends L.GridLayer {
         if (cx >= 0 && cz >= 0 && cx < CHUNKS && cz < CHUNKS) lists.push(chunks.veg(cx, cz));
     const pts = [];
     for (const list of await Promise.all(lists))
-      for (const p of list) if (p.x >= minX - MARGIN && p.x <= maxX + MARGIN && p.z >= minZ - MARGIN && p.z <= maxZ + MARGIN && VEG[p.kind] && !(ORE_KINDS.has(p.kind) && oreExclusions.matches(p.x, p.z))) pts.push(p);
+      for (const p of list) if (p.x >= minX - MARGIN && p.x <= maxX + MARGIN && p.z >= minZ - MARGIN && p.z <= maxZ + MARGIN && VEG[p.kind] && !(ORE_KINDS.has(p.kind) && oreExclusions.matches(p.x, p.z, p.kind))) pts.push(p);
     if (pts.length === 0) return;
     pts.sort((a, b) => b.z - a.z);   // north to south: nearer (southern) crowns overlap farther ones
     const ctx = canvas.getContext('2d');
