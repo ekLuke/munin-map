@@ -15,6 +15,7 @@ import { chunks, vegetation } from '../data.js';
 import { materialColors, materialNames } from '../icons.js';
 import { ruins } from './ruins.js';
 import { TREE_STRIDE, vegShowMask } from '../vegpack.js';
+import { oreExclusions, ORE_KINDS } from '../orehide.js';
 import { layerState } from '../layerstate.js';
 
 export function webgl2Available() {
@@ -1637,6 +1638,15 @@ export class TreesGL extends ChunkShapes {
   constructor() {
     super(); this.order = 1; this.stride = TREE_STRIDE;
     vegetation.onChange(() => this.refresh());
+    oreExclusions.onChange(() => {
+      // Clear cached GPU vegetation so hidden deposits are actually removed.
+      for (const key of this.gpu.keys()) this.dirty.add(this.blockOf(key));
+      this.gpu.clear();
+      this.prefetched = null;
+      this.needKey = null;
+      this.dataRev = (this.dataRev || 0) + 1;
+      if (this.sc) this.sc.reset();
+    });
     layerState.onChange((k) => { if (/^veg[A-Z]/.test(k)) this.changed(); });   // a group or kind switched on or off
   }
   // from 4 only what is on screen (a zoom-in will show it), padding too from TREES_MIN
@@ -1651,7 +1661,29 @@ export class TreesGL extends ChunkShapes {
   }
   rev(cx, cz) { return vegetation.rev(cx, cz); }
   fetch(cx, cz) { return vegetation.get(cx, cz); }
-  pack(packed) { return packed; }   // done by the worker (vegpack.js)
+  pack(packed) {
+    if (!packed?.bytes || !packed.count) return packed;
+    const src = new Uint8Array(packed.bytes);
+    const dv = new DataView(packed.bytes);
+    let removed = 0, smallRemoved = 0;
+    const out = new Uint8Array(src.byteLength);
+    let offset = 0;
+    for (let i = 0; i < packed.count; i++) {
+      const o = i * TREE_STRIDE;
+      const kind = src[o + 19] >> 2;
+      const x = dv.getFloat32(o, true), z = dv.getFloat32(o + 4, true);
+      if (ORE_KINDS.has(kind) && oreExclusions.matches(x, z)) {
+        removed++;
+        if (i < packed.small) smallRemoved++;
+        continue;
+      }
+      out.set(src.subarray(o, o + TREE_STRIDE), offset);
+      offset += TREE_STRIDE;
+    }
+    if (!removed) return packed;
+    return { ...packed, bytes: out.slice(0, offset).buffer, count: packed.count - removed,
+      small: packed.small - smallRemoved };
+  }
   program(sc) { return sc.tree; }
   layout(gl) { return [['a_center', 2, gl.FLOAT, false], ['a_r', 1, gl.FLOAT, false], ['a_seed', 1, gl.FLOAT, false], ['a_color', 4, gl.UNSIGNED_BYTE, true]]; }
   // eases in between 4.5 and 5.25 (and over FADE_MS when a zoom crosses that)
