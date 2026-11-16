@@ -126,10 +126,10 @@ export class MarkerLayers {
         const completion = this.completionPin(m);
         if (completion && this.hideCompleted) continue;
         const editable = m.cat === 'base' && window.app?.config?.web_edit_bases !== false;
-        const label = completion ? `✕ ${m.label || cat}` : m.label;
+        const label = m.label;
         // a table pin as the game draws a shared one (markercanvas.js gamePinImage): its grey name too
         const crossSprite = this.gameIcons['pin:Checked'] ? `icons/game/${this.gameIcons['pin:Checked']}.png` : true;
-        const gamePin = completion ? { checked: crossSprite } : cat === 'tablepin' ? { checked: m.checked ? crossSprite : false } : undefined;
+        const gamePin = completion ? { checked: true } : cat === 'tablepin' ? { checked: m.checked ? crossSprite : false } : undefined;
         items.push({ x: m.x, z: m.z, icon: m.icon || cat, color: completion ? '#42c58b' : (cat === 'ward' && !m.on ? colors.wardoff : colors[m.icon] || colors[cat] || '#9aa5b5'), img: this.gameIcon(m.icon || cat), label, gamePin,
           area: cat === 'ward' && m.r ? { r: m.r, on: !!m.on } : undefined,   // the ground a ward protects (MarkerGL draws the ring)
           labelColor: gamePin ? '#d6d6d6' : undefined,
