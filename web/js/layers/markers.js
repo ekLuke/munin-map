@@ -3,7 +3,9 @@
 // joined by a dashed line.
 
 import { toLatLng, fromLatLng } from '../crs.js';
-import { markers as store } from '../data.js';
+import { markers as store, chunks } from '../data.js';
+import { chunkOf } from '../crs.js';
+import { oreExclusions, ORE_PIN_NAME, ORE_PIN_TEXT, ORE_KINDS, ORE_NAMES } from '../orehide.js';
 import { iconSvg, colors } from '../icons.js';
 import { getJSON, on } from '../net.js';
 import { MarkerCanvas } from './markercanvas.js';
@@ -113,7 +115,7 @@ export class MarkerLayers {
     const items = [], lines = [];
     if (this.visible.get('pins') !== false)
       for (const p of this.pins.values()) {
-        if (this.isCompletionPin(p)) continue; // internal status markers only
+        if (this.isCompletionPin(p) || oreExclusions.isPin(p)) continue; // internal status markers only
         const icon = PIN_TYPES.includes(p.type) ? p.type : 'pin';
         items.push({ x: p.x, z: p.z, icon, color: colors[icon], img: this.gameIcon(icon), label: p.text, pin: true, open: (ll) => this.openPin(p, ll) });
       }
@@ -166,19 +168,21 @@ export class MarkerLayers {
       const pins = await getJSON('data/pins.json?client=' + encodeURIComponent(clientId()));
       this.pins.clear();
       for (const p of pins) this.addPin(p);
+      oreExclusions.setPins(this.pins.values());
     } catch (e) { console.warn('pins', e); }
   }
 
   addPin(p) {
     if (this.pins.get(p.id)?.mine) p.mine = true;   // the live copy doesn't say whose it is
     this.pins.set(p.id, p);
+    oreExclusions.setPins(this.pins.values());
     this.list = null;
     this.canvas.draw();
     this.emitPins();
   }
 
   removePin(id) {
-    if (this.pins.delete(id)) { this.list = null; this.canvas.draw(); this.emitPins(); }
+    if (this.pins.delete(id)) { oreExclusions.setPins(this.pins.values()); this.list = null; this.canvas.draw(); this.emitPins(); }
   }
 
   openPin(p, ll) {
@@ -354,7 +358,7 @@ export class MarkerLayers {
     try { name = localStorage.getItem('munin-pin-name') || ''; } catch (e) { /* no storage */ }
     const el = document.createElement('form');
     el.className = 'pin-form';
-    el.innerHTML = `<b>New pin</b><small>${Math.round(x)}, ${Math.round(z)}</small>
+    el.innerHTML = `<b>New pin</b><small>${Math.round(x)}, ${Math.round(z)}</small>\n      <div class="row"><button class="btn small" type="button" data-act="ore">Nascondi giacimento scavato / Ripristina</button></div>
       <div class="row"><select name="type">${PIN_TYPES.map((t) => `<option value="${t}">${t}</option>`).join('')}</select>
       <input name="text" maxlength="20" placeholder="Label (letters, numbers)" autocomplete="off"></div>
       <div class="row"><input name="name" maxlength="16" placeholder="Your name" value="${escape(name)}" autocomplete="off"><button class="btn small" type="submit">Add pin</button>${this.onPing ? '<button class="btn small" type="button" data-act="ping" title="Ping this spot in game">Ping</button>' : ''}</div>
@@ -369,6 +373,60 @@ export class MarkerLayers {
       try { localStorage.setItem('munin-pin-name', who); } catch (e) { /* no storage */ }
       this.onPing(latlng, who);
       this.map.closePopup(popup);
+    });
+    el.querySelector('[data-act=ore]')?.addEventListener('click', async () => {
+      const err = el.querySelector('.err');
+      const btn = el.querySelector('[data-act=ore]');
+      btn.disabled = true;
+      err.hidden = true;
+      try {
+        const px = Number(x), pz = Number(z);
+        const nearSaved = [...this.pins.values()].filter(p => oreExclusions.isPin(p))
+          .map(p => ({p, distance: Math.hypot(px - Number(p.x), pz - Number(p.z))}))
+          .sort((a,b) => a.distance - b.distance)[0];
+        let pin = nearSaved?.distance < 8 ? nearSaved.p : null;
+        let target = null;
+        if (!pin) {
+          const cx = chunkOf(px), cz = chunkOf(pz), pts = [];
+          // Search neighbouring chunks because the nearest ore may sit across a boundary.
+          for (let zz = cz - 1; zz <= cz + 1; zz++)
+            for (let xx = cx - 1; xx <= cx + 1; xx++)
+              if (xx >= 0 && zz >= 0) {
+                const list = await chunks.veg(xx, zz).catch(() => []);
+                for (const p of list) if (ORE_KINDS.has(p.kind)) {
+                  const distance = Math.hypot(px - p.x, pz - p.z);
+                  if (distance < 8) pts.push({ ...p, distance });
+                }
+              }
+          pts.sort((a,b) => a.distance - b.distance);
+          target = pts.find(p => !oreExclusions.pinAt(p.x, p.z));
+          if (!target) throw new Error('Nessun nuovo minerale entro 8 m. Per ripristinare, clicca vicino al giacimento nascosto.');
+          if (!confirm(`Nascondere ${ORE_NAMES.get(target.kind) || 'minerale'} in ${Math.round(target.x)}, ${Math.round(target.z)}? Non cambia il mondo di Valheim.`)) return;
+        } else if (!confirm('Ripristinare questo giacimento sulla mappa?')) return;
+        let token = '';
+        try { token = localStorage.getItem('munin-admin-key') || ''; } catch {}
+        const headers = { 'Content-Type':'application/json', 'X-Munin-Client':clientId() };
+        if (token) headers['X-Munin-Token'] = token;
+        if (pin) {
+          if (!pin.mine && !token) throw new Error('Per ripristinare un giacimento nascosto da un altro browser serve il token admin.');
+          const response = await fetch('api/unpin?id='+encodeURIComponent(pin.id), {method:'POST',headers,body:'{}'});
+          const data = await response.json().catch(()=>({}));
+          if (!response.ok) throw new Error(data.error || 'HTTP '+response.status);
+          this.removePin(pin.id);
+        } else {
+          const xx = Math.round(target.x * 10)/10, zz = Math.round(target.z * 10)/10;
+          const response = await fetch('api/pin',{method:'POST',headers,body:JSON.stringify({
+            x:xx,z:zz,type:'dot',text:ORE_PIN_TEXT,name:ORE_PIN_NAME,client:clientId()
+          })});
+          const data = await response.json().catch(()=>({}));
+          if (!response.ok) throw new Error(data.error || 'HTTP '+response.status);
+          if (data.id) this.addPin({id:data.id,x:xx,z:zz,type:'dot',text:ORE_PIN_TEXT,name:ORE_PIN_NAME,mine:true});
+          else await this.loadPins();
+        }
+        this.map.closePopup(popup);
+      } catch (e) {
+        err.textContent = 'Minerali: '+e.message; err.hidden = false;
+      } finally { btn.disabled = false; }
     });
     el.querySelector('[data-act=key]').addEventListener('click', () => {
       const err = el.querySelector('.err'), key = el.querySelector('[name=key]');
