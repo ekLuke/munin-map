@@ -3,7 +3,7 @@
 // joined by a dashed line.
 
 import { toLatLng, fromLatLng } from '../crs.js';
-import { markers as store, chunks } from '../data.js';
+import { markers as store, vegetation } from '../data.js';
 import { chunkOf } from '../crs.js';
 import { oreExclusions, ORE_PIN_NAME, ORE_PIN_TEXT, ORE_KINDS, ORE_NAMES } from '../orehide.js';
 import { iconSvg, colors } from '../icons.js';
@@ -392,10 +392,16 @@ export class MarkerLayers {
           for (let zz = cz - 1; zz <= cz + 1; zz++)
             for (let xx = cx - 1; xx <= cx + 1; xx++)
               if (xx >= 0 && zz >= 0) {
-                const list = await chunks.veg(xx, zz).catch(() => []);
-                for (const p of list) if (ORE_KINDS.has(p.kind)) {
-                  const distance = Math.hypot(px - p.x, pz - p.z);
-                  if (distance < 8) pts.push({ ...p, distance });
+                // Use the same 2D vegetation data that powers Munin Map, even when 3D is disabled.
+                const data = await vegetation.get(xx, zz).catch(() => null);
+                if (!data?.count || !data.bytes) continue;
+                const dv = new DataView(data.bytes);
+                for (let j = 0; j < data.count; j++) {
+                  const o = j * 20, kind = dv.getUint8(o + 19) >> 2;
+                  if (!ORE_KINDS.has(kind)) continue;
+                  const ox = dv.getFloat32(o, true), oz = dv.getFloat32(o + 4, true);
+                  const distance = Math.hypot(px - ox, pz - oz);
+                  if (distance < 8) pts.push({ x: ox, z: oz, kind, distance });
                 }
               }
           pts.sort((a,b) => a.distance - b.distance);
