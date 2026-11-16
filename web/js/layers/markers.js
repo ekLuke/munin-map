@@ -104,6 +104,7 @@ export class MarkerLayers {
     if (sp && !sets.some((s) => s.id === 'spawn'))
       sets = [{ id: 'spawn', label: 'Spawn', markers: [{ x: Math.round(sp.x), z: Math.round(sp.z), label: 'Spawn', cat: 'spawn', icon: 'spawn' }] }, ...sets];
     this.sets = sets;
+    oreExclusions.setDungeons(sets);
     this.list = null;
     for (const fn of this.listeners) fn(sets);
     this.canvas.draw();
