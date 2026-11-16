@@ -16,6 +16,8 @@ const listeners = new Set();
 let excludedPoints = [];
 let completedPoints = [];
 let dungeonEntrances = [];
+let dungeonGrid = new Map();
+const GRID_SIZE = 256;
 let revision = '';
 
 function identity(list) {
@@ -50,15 +52,24 @@ export const oreExclusions = {
         x: Number(m.x), z: Number(m.z),
         crypt: /sunken.?crypt/i.test(String(m.label || '') + ' ' + String(m.prefab || '')),
       }));
+    dungeonGrid = new Map();
+    for (const d of dungeonEntrances) {
+      const cell = `${Math.floor(d.x/GRID_SIZE)},${Math.floor(d.z/GRID_SIZE)}`;
+      if (!dungeonGrid.has(cell)) dungeonGrid.set(cell, []);
+      dungeonGrid.get(cell).push(d);
+    }
     refresh();
   },
   isCompletedCrypt(x,z) {
-    // The server assigns a dungeon object to the closest dungeon entrance.
-    // Never hide a pile assigned to another dungeon within the same radius.
+    // World/Dungeons.cs assigns an inside object to the nearest dungeon entrance
+    // within 160 m. Check only nearby 256m cells to avoid scanning the entire world.
     let nearest = null, best = DUNGEON_REACH ** 2;
-    for (const d of dungeonEntrances) {
-      const dist = (x-d.x)**2 + (z-d.z)**2;
-      if (dist < best) { best = dist; nearest = d; }
+    const cx = Math.floor(x / GRID_SIZE), cz = Math.floor(z / GRID_SIZE);
+    for (let dz=-1; dz<=1; dz++) for (let dx=-1; dx<=1; dx++) {
+      for (const d of dungeonGrid.get(`${cx+dx},${cz+dz}`) || []) {
+        const dist = (x-d.x)**2 + (z-d.z)**2;
+        if (dist < best) { best = dist; nearest = d; }
+      }
     }
     return !!nearest?.crypt && completedPoints.some(([px,pz]) =>
       Math.abs(nearest.x-px) < 0.15 && Math.abs(nearest.z-pz) < 0.15);
